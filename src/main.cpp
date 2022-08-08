@@ -9,9 +9,12 @@
 #include <ArduinoJson.h>
 #include <NewPing.h>
 WiFiServer server(80);
+WiFiServer server2(79);
 String header;
 
 int currentGarageDoorState;
+
+int targetGarageDoorState;
 
 const int trig = 12;
 const int echo = 14;
@@ -45,9 +48,62 @@ void isDoorThere()
   distance = duration / 2 * 0.0343;
 }
 
+void getTargetDoorState(WiFiClient client)
+{
+  HTTPClient http;
+  http.begin(client, "http://10.0.0.101:80/status");
+  StaticJsonDocument<96> doc;
+
+  DeserializationError error = deserializeJson(doc, http.getString());
+
+  if (error)
+  {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  // int currentDoorState = doc["currentDoorState"]; // 0
+  targetGarageDoorState = doc["targetDoorState"]; // 1
+  http.end();
+}
+
+void updateFanBridge(WiFiClient client)
+{
+  HTTPClient http;
+  http.begin(client, "http://10.0.0.1:80/status/update");
+  StaticJsonDocument<32> doc;
+
+  doc["currentDoorState"] = currentGarageDoorState;
+  doc["targetDoorState"] = targetGarageDoorState;
+  String output;
+  serializeJson(doc, output);
+  http.addHeader("Content-Type", "application/json");
+  http.POST(output);
+  http.end();
+}
+
+void checkForDisruption(WiFiClient client)
+{
+  if (currentGarageDoorState != targetGarageDoorState)
+  {
+    Serial.println("Disruption detected");
+    targetGarageDoorState = currentGarageDoorState;
+    updateFanBridge(client);
+  }
+}
+
 void loop()
 {
-  WiFiClient client = server.available(); // Listen for incoming clients
+  WiFiClient client = server.available();   // Listen for incoming clients
+  WiFiClient client2 = server2.available(); // Listen for incoming clients
+  HTTPClient http;
+
+  // This block of code before if(client) is the watchdog service for a garage update that is not handled by a smart home, i.e cars, remotes.
+
+  isDoorThere();
+  getTargetDoorState(client2);
+  checkForDisruption(client2);
 
   if (client)
   {                                // If a new client connects,
