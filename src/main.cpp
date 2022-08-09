@@ -14,7 +14,7 @@ String header;
 
 int currentGarageDoorState;
 
-int targetGarageDoorState;
+int targetGarageDoorState = -1;
 
 const int trig = 12;
 const int echo = 14;
@@ -46,6 +46,18 @@ void isDoorThere()
 {
   duration = sonar.ping_median(iterations);
   distance = duration / 2 * 0.0343;
+  if (distance > 15)
+  {
+    currentGarageDoorState = 0;
+  }
+  if (distance < 15)
+  {
+    currentGarageDoorState = 1;
+  }
+  if (distance < 0.02)
+  {
+    currentGarageDoorState = 0;
+  }
 }
 
 void getTargetDoorState(WiFiClient client)
@@ -53,45 +65,29 @@ void getTargetDoorState(WiFiClient client)
   HTTPClient http;
   http.begin(client, "http://10.0.0.101:80/status");
   StaticJsonDocument<96> doc;
-
+  http.GET();
   DeserializationError error = deserializeJson(doc, http.getString());
-
-  if (error)
-  {
-    Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.f_str());
-    return;
-  }
 
   // int currentDoorState = doc["currentDoorState"]; // 0
   targetGarageDoorState = doc["targetDoorState"]; // 1
   http.end();
 }
 
-void updateFanBridge(WiFiClient client)
-{
-  HTTPClient http;
-  http.begin(client, "http://10.0.0.1:80/status/update");
-  StaticJsonDocument<32> doc;
+// void checkForDisruption(WiFiClient client)
+// {
+//   // Serial.println("Checking for disruption...");
+//   // Serial.print(currentGarageDoorState);
+//   // Serial.print(" ");
+//   // Serial.print(targetGarageDoorState);
+//   if (currentGarageDoorState != targetGarageDoorState || targetGarageDoorState == -1)
+//   {
 
-  doc["currentDoorState"] = currentGarageDoorState;
-  doc["targetDoorState"] = targetGarageDoorState;
-  String output;
-  serializeJson(doc, output);
-  http.addHeader("Content-Type", "application/json");
-  http.POST(output);
-  http.end();
-}
+//     // Serial.println("Disruption detected");
+//     isDoorThere();
+//     targetGarageDoorState = currentGarageDoorState;
 
-void checkForDisruption(WiFiClient client)
-{
-  if (currentGarageDoorState != targetGarageDoorState)
-  {
-    Serial.println("Disruption detected");
-    targetGarageDoorState = currentGarageDoorState;
-    updateFanBridge(client);
-  }
-}
+//   }
+// }
 
 void loop()
 {
@@ -102,19 +98,19 @@ void loop()
   // This block of code before if(client) is the watchdog service for a garage update that is not handled by a smart home, i.e cars, remotes.
 
   isDoorThere();
-  getTargetDoorState(client2);
-  checkForDisruption(client2);
 
+  // Serial.println(currentGarageDoorState);
+  // Serial.println(distance);
   if (client)
-  {                                // If a new client connects,
-    Serial.println("New Client."); // print a message out in the serial port
-    String currentLine = "";       // make a String to hold incoming data from the client
+  { // If a new client connects,
+    // Serial.println("New Client."); // print a message out in the serial port
+    String currentLine = ""; // make a String to hold incoming data from the client
     while (client.connected())
     { // loop while the client's connected
       if (client.available())
       {                         // if there's bytes to read from the client,
         char c = client.read(); // read a byte, then
-        Serial.write(c);        // print it out the serial monitor
+        // Serial.write(c);        // print it out the serial monitor
         header += c;
         if (c == '\n')
         { // if the byte is a newline character
@@ -132,23 +128,19 @@ void loop()
             // turns the GPIOs on and off
             if (header.indexOf("GET /status") >= 0)
             {
-              isDoorThere();
-              if (distance > 10)
-              {
-                currentGarageDoorState = 0;
-              }
-              if (distance < 10)
-              {
-                currentGarageDoorState = 1;
-              }
-              if (distance < 0.02)
-              {
-                currentGarageDoorState = 0;
-              }
+              getTargetDoorState(client2);
+
               // print the distance to serial monitor
-              Serial.print("Distance: ");
-              Serial.println(distance);
-              client.println(currentGarageDoorState); // 0 for open, 1 for closed, 2 for opening, and 3 for closing
+              // Serial.print("Distance: ");
+              // Serial.println(distance);
+              StaticJsonDocument<32> doc;
+
+              doc["currentDoorState"] = currentGarageDoorState;
+              doc["targetDoorState"] = targetGarageDoorState;
+              String output;
+              serializeJson(doc, output);
+              client.println(output);
+              // client.println(targetGarageDoorState); // 0 for open, 1 for closed, 2 for opening, and 3 for closing
             }
             break;
           }
@@ -167,7 +159,7 @@ void loop()
     header = "";
     // Close the connection
     client.stop();
-    Serial.println("Client disconnected.");
-    Serial.println("");
+    // Serial.println("Client disconnected.");
+    // Serial.println("");
   }
 }
